@@ -1,0 +1,138 @@
+name: _Deploy to ECS (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      image_uri:
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-1
+  PROJECT: myapp
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-ecs-${{ inputs.environment }}
+      cancel-in-progress: false
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: >-
+            ${{
+              inputs.environment == 'prod' && secrets.PROD_ROLE_ARN ||
+              inputs.environment == 'staging' && secrets.STAGING_ROLE_ARN ||
+              secrets.DEV_ROLE_ARN
+            }}
+          role-session-name: github-actions-deploy-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download current task definition
+        id: task-def
+        run: |
+          FAMILY="${{ env.PROJECT }}-${{ inputs.environment }}-backend"
+
+          aws ecs describe-task-definition \
+            --task-definition "${FAMILY}" \
+            --query 'taskDefinition' \
+            --output json > task-def.json
+
+          # Remove fields not allowed in register-task-definition
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            task-def.json > clean-task-def.json
+
+          echo "family=${FAMILY}" >> "$GITHUB_OUTPUT"
+
+      - name: Update container image in task definition
+        id: new-task-def
+        run: |
+          jq --arg IMAGE "${{ inputs.image_uri }}" \
+            '.containerDefinitions[0].image = $IMAGE' \
+            clean-task-def.json > new-task-def.json
+
+          echo "Updated image to: ${{ inputs.image_uri }}"
+          cat new-task-def.json | jq '.containerDefinitions[0].image'
+
+      - name: Register new task definition
+        id: register
+        run: |
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://new-task-def.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          echo "task_definition_arn=${NEW_ARN}" >> "$GITHUB_OUTPUT"
+          echo "Registered: ${NEW_ARN}"
+
+      - name: Update ECS service
+        run: |
+          CLUSTER="${{ env.PROJECT }}-${{ inputs.environment }}-cluster"
+          SERVICE="${{ env.PROJECT }}-${{ inputs.environment }}-service"
+
+          aws ecs update-service \
+            --cluster "${CLUSTER}" \
+            --service "${SERVICE}" \
+            --task-definition "${{ steps.register.outputs.task_definition_arn }}" \
+            --force-new-deployment \
+            --output text \
+            --query 'service.serviceName'
+
+          echo "Waiting for service to stabilize..."
+
+      - name: Wait for deployment to complete
+        run: |
+          CLUSTER="${{ env.PROJECT }}-${{ inputs.environment }}-cluster"
+          SERVICE="${{ env.PROJECT }}-${{ inputs.environment }}-service"
+
+          aws ecs wait services-stable \
+            --cluster "${CLUSTER}" \
+            --services "${SERVICE}"
+
+          echo "Deployment complete!"
+
+      - name: Verify deployment
+        run: |
+          CLUSTER="${{ env.PROJECT }}-${{ inputs.environment }}-cluster"
+          SERVICE="${{ env.PROJECT }}-${{ inputs.environment }}-service"
+
+          RUNNING=$(aws ecs describe-services \
+            --cluster "${CLUSTER}" \
+            --services "${SERVICE}" \
+            --query 'services[0].runningCount' \
+            --output text)
+
+          DESIRED=$(aws ecs describe-services \
+            --cluster "${CLUSTER}" \
+            --services "${SERVICE}" \
+            --query 'services[0].desiredCount' \
+            --output text)
+
+          echo "Running: ${RUNNING} / Desired: ${DESIRED}"
+
+          if [[ "${RUNNING}" -lt "${DESIRED}" ]]; then
+            echo "::error::Running count (${RUNNING}) is less than desired (${DESIRED})"
+            exit 1
+          fi
+
+      - name: Summary
+        run: |
+          echo "### ECS Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Parameter | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Environment | \`${{ inputs.environment }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image | \`${{ inputs.image_uri }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Task Definition | \`${{ steps.register.outputs.task_definition_arn }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Cluster | \`${{ env.PROJECT }}-${{ inputs.environment }}-cluster\` |" >> "$GITHUB_STEP_SUMMARY"

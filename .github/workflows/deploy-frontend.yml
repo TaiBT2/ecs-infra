@@ -1,0 +1,118 @@
+name: Deploy Frontend (SPA → S3 + CloudFront)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/frontend/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [dev, staging, prod]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-1
+  PROJECT: myapp
+  NODE_VERSION: "20"
+  FRONTEND_DIR: apps/frontend
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build & Test
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - environment: dev
+            api_url: https://api.dev.<DOMAIN>
+          - environment: staging
+            api_url: https://api.staging.<DOMAIN>
+          - environment: prod
+            api_url: https://api.<DOMAIN>
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ env.FRONTEND_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm ci
+
+      - name: Lint
+        if: github.event_name == 'pull_request'
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm run lint --if-present
+
+      - name: Run tests
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm test -- --passWithNoTests
+
+      - name: Build
+        if: github.event_name != 'pull_request'
+        working-directory: ${{ env.FRONTEND_DIR }}
+        env:
+          VITE_API_URL: ${{ matrix.api_url }}
+          VITE_ENVIRONMENT: ${{ matrix.environment }}
+        run: npm run build
+
+      - name: Upload build artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build-${{ matrix.environment }}
+          path: ${{ env.FRONTEND_DIR }}/dist
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Deploy to S3 + invalidate CloudFront
+  # ---------------------------------------------------------------------------
+  deploy-dev:
+    name: Deploy to dev
+    needs: build
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
+    uses: ./.github/workflows/_deploy-s3.yml
+    with:
+      environment: dev
+      artifact_name: frontend-build-dev
+    secrets: inherit
+
+  deploy-staging:
+    name: Deploy to staging
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'staging'
+    uses: ./.github/workflows/_deploy-s3.yml
+    with:
+      environment: staging
+      artifact_name: frontend-build-staging
+    secrets: inherit
+
+  deploy-prod:
+    name: Deploy to prod
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'prod'
+    uses: ./.github/workflows/_deploy-s3.yml
+    with:
+      environment: prod
+      artifact_name: frontend-build-prod
+    secrets: inherit

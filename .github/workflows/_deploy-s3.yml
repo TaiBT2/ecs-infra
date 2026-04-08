@@ -1,0 +1,135 @@
+name: _Deploy to S3 + CloudFront (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      artifact_name:
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-1
+  PROJECT: myapp
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-s3-${{ inputs.environment }}
+      cancel-in-progress: false
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: >-
+            ${{
+              inputs.environment == 'prod' && secrets.PROD_ROLE_ARN ||
+              inputs.environment == 'staging' && secrets.STAGING_ROLE_ARN ||
+              secrets.DEV_ROLE_ARN
+            }}
+          role-session-name: github-actions-s3-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: dist
+
+      - name: Sync to S3
+        run: |
+          BUCKET="${{ env.PROJECT }}-${{ inputs.environment }}-spa"
+
+          echo "Deploying to s3://${BUCKET}..."
+
+          # Sync with cache headers for hashed assets (long cache)
+          aws s3 sync dist/ "s3://${BUCKET}/" \
+            --delete \
+            --exclude "*.html" \
+            --cache-control "public, max-age=31536000, immutable"
+
+          # Upload HTML files with no-cache (short cache for SPA routing)
+          aws s3 sync dist/ "s3://${BUCKET}/" \
+            --exclude "*" \
+            --include "*.html" \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+          echo "S3 sync complete."
+
+      - name: Invalidate CloudFront cache
+        id: invalidation
+        run: |
+          DISTRIBUTION_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='${{ env.PROJECT }}-${{ inputs.environment }}-distribution'].Id" \
+            --output text)
+
+          if [[ -z "${DISTRIBUTION_ID}" || "${DISTRIBUTION_ID}" == "None" ]]; then
+            echo "::warning::CloudFront distribution not found by comment tag. Trying by alias..."
+            # Fallback: find by S3 origin
+            DISTRIBUTION_ID=$(aws cloudfront list-distributions \
+              --query "DistributionList.Items[?Origins.Items[?Id=='s3-${{ env.PROJECT }}-${{ inputs.environment }}-spa']].Id" \
+              --output text)
+          fi
+
+          if [[ -z "${DISTRIBUTION_ID}" || "${DISTRIBUTION_ID}" == "None" ]]; then
+            echo "::error::Could not find CloudFront distribution"
+            exit 1
+          fi
+
+          echo "Invalidating CloudFront distribution: ${DISTRIBUTION_ID}"
+
+          INVALIDATION_ID=$(aws cloudfront create-invalidation \
+            --distribution-id "${DISTRIBUTION_ID}" \
+            --paths "/*" \
+            --query 'Invalidation.Id' \
+            --output text)
+
+          echo "distribution_id=${DISTRIBUTION_ID}" >> "$GITHUB_OUTPUT"
+          echo "invalidation_id=${INVALIDATION_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for invalidation to complete
+        run: |
+          echo "Waiting for CloudFront invalidation ${{ steps.invalidation.outputs.invalidation_id }}..."
+
+          aws cloudfront wait invalidation-completed \
+            --distribution-id "${{ steps.invalidation.outputs.distribution_id }}" \
+            --id "${{ steps.invalidation.outputs.invalidation_id }}"
+
+          echo "Invalidation complete!"
+
+      - name: Smoke test
+        run: |
+          DOMAIN=$(aws cloudfront get-distribution \
+            --id "${{ steps.invalidation.outputs.distribution_id }}" \
+            --query 'Distribution.DomainName' \
+            --output text)
+
+          echo "Testing https://${DOMAIN}..."
+
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://${DOMAIN}" || true)
+
+          if [[ "${STATUS}" == "200" ]]; then
+            echo "Smoke test passed (HTTP ${STATUS})"
+          else
+            echo "::warning::Smoke test returned HTTP ${STATUS} — may take time to propagate"
+          fi
+
+      - name: Summary
+        run: |
+          echo "### Frontend Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Parameter | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Environment | \`${{ inputs.environment }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| S3 Bucket | \`${{ env.PROJECT }}-${{ inputs.environment }}-spa\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| CloudFront | \`${{ steps.invalidation.outputs.distribution_id }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Invalidation | \`${{ steps.invalidation.outputs.invalidation_id }}\` |" >> "$GITHUB_STEP_SUMMARY"
