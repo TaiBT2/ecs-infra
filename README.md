@@ -4,34 +4,15 @@ Dự án Infrastructure-as-Code cho ứng dụng web 3-tier trên AWS, sử dụ
 
 ## Kiến trúc tổng quan
 
-```
-                    ┌─────────────┐
-                    │  Route 53   │
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │ CloudFront  │
-                    │  + WAF      │
-                    └──────┬──────┘
-                           │
-              ┌────────────┴────────────┐
-              │                         │
-       ┌──────▼──────┐          ┌──────▼──────┐
-       │  S3 (SPA)   │          │    ALB      │
-       └─────────────┘          └──────┬──────┘
-                                       │
-                          ┌────────────┴────────────┐
-                          │    ECS Fargate           │
-                          │    (Private Subnet)      │
-                          └────────────┬────────────┘
-                                       │
-                          ┌────────────┴────────────┐
-                          │                         │
-                   ┌──────▼──────┐          ┌──────▼──────┐
-                   │ RDS Postgres│          │ ElastiCache  │
-                   │ (Multi-AZ)  │          │ (Redis)      │
-                   └─────────────┘          └─────────────┘
-```
+![MyApp AWS Deployment Architecture](app.drawio.png)
+
+**Các thành phần chính:**
+
+- **Edge Layer**: Route 53 → CloudFront + WAF/Shield → S3 (SPA static hosting)
+- **Public Subnet**: ALB, NAT Gateway, Internet Gateway
+- **App Private Subnet**: ECS Fargate, API Gateway, VPC Endpoints
+- **Data Private Subnet**: RDS PostgreSQL (Multi-AZ), ElastiCache Redis, Backup
+- **Observability**: CloudWatch, CloudTrail, GuardDuty, AWS Config, X-Ray, OpenSearch
 
 ## Cấu trúc dự án
 
