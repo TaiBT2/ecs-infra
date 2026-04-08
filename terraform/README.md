@@ -1,14 +1,14 @@
 # Terraform Configuration
 
-## Cấu trúc
+## Structure
 
-- `modules/` — Các module tái sử dụng, không chứa giá trị env cụ thể
-- `envs/` — Cấu hình riêng từng môi trường, gọi modules và truyền biến
-- `global/` — Tài nguyên toàn cục, chỉ cần tạo một lần
+- `modules/` — Reusable modules, does not contain env-specific values
+- `envs/` — Per-environment configuration, calls modules and passes variables
+- `global/` — Global resources, only need to be created once
 
 ## Modules
 
-| Module | Mô tả |
+| Module | Description |
 |---|---|
 | `networking` | VPC, subnets, NAT Gateway, IGW, route tables, VPC endpoints |
 | `security` | KMS keys, Secrets Manager, IAM roles, Security Groups |
@@ -17,21 +17,21 @@
 | `data` | RDS PostgreSQL, ElastiCache Redis, S3 buckets, AWS Backup |
 | `observability` | CloudWatch alarms, OpenSearch, GuardDuty, AWS Config, CloudTrail |
 
-## Quy trình deploy
+## Deploy Process
 
 ```bash
-# 1. Bootstrap state (chỉ lần đầu)
+# 1. Bootstrap state (first time only)
 ./scripts/bootstrap.sh dev
 
-# 2. Init và apply
+# 2. Init and apply
 cd terraform/envs/dev
 terraform init
 terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
-## Quản lý state
+## State Management
 
 - Backend: S3 + DynamoDB lock
-- Mỗi env có state file riêng: `myapp-{env}-terraform-state/{env}/terraform.tfstate`
-- KHÔNG sử dụng Terraform workspaces
+- Each env has its own state file: `myapp-{env}-terraform-state/{env}/terraform.tfstate`
+- DO NOT use Terraform workspaces

@@ -1,28 +1,28 @@
-# Quản lý quyền truy cập AWS
+# AWS Access Management
 
 ## Request SSO access
 
-Để được cấp quyền truy cập AWS, bạn cần:
+To be granted AWS access, you need to:
 
-1. Liên hệ **Team Lead** hoặc **IT Admin** để yêu cầu thêm tài khoản vào AWS IAM Identity Center (SSO).
-2. Cung cấp thông tin:
-   - Email công ty
-   - Team / dự án
-   - Môi trường cần truy cập (dev / staging / prod)
-   - Mức quyền cần thiết (ReadOnly, PowerUser, Admin)
-3. Sau khi được phê duyệt, bạn sẽ nhận email mời từ AWS SSO. Làm theo hướng dẫn trong email để kích hoạt tài khoản.
+1. Contact your **Team Lead** or **IT Admin** to request adding your account to AWS IAM Identity Center (SSO).
+2. Provide the following information:
+   - Company email
+   - Team / project
+   - Environment access needed (dev / staging / prod)
+   - Required permission level (ReadOnly, PowerUser, Admin)
+3. After approval, you will receive an invitation email from AWS SSO. Follow the instructions in the email to activate your account.
 
-> **Lưu ý:** Quyền truy cập production yêu cầu phê duyệt từ Engineering Manager trở lên.
+> **Note:** Production access requires approval from an Engineering Manager or above.
 
 ## Configure AWS SSO
 
-Sau khi có tài khoản SSO, cấu hình trên máy local:
+After obtaining your SSO account, configure it on your local machine:
 
 ```bash
 aws configure sso
 ```
 
-Nhập các thông tin sau khi được hỏi:
+Enter the following information when prompted:
 
 ```
 SSO session name (Recommended): infra-ecs
@@ -31,9 +31,9 @@ SSO region [None]: ap-southeast-1
 SSO registration scopes [sso:account:access]:
 ```
 
-Trình duyệt sẽ mở để bạn xác thực. Sau khi xác thực, chọn account và role phù hợp.
+Your browser will open for authentication. After authenticating, select the appropriate account and role.
 
-Cấu hình sẽ được lưu vào `~/.aws/config`. Ví dụ profile được tạo:
+The configuration will be saved to `~/.aws/config`. Example of a generated profile:
 
 ```ini
 [profile dev]
@@ -49,34 +49,34 @@ sso_region = ap-southeast-1
 sso_registration_scopes = sso:account:access
 ```
 
-Đăng nhập hàng ngày:
+Daily login:
 
 ```bash
 aws sso login --profile dev
 ```
 
-## Assume role cho môi trường cụ thể
+## Assume role for a specific environment
 
-Trong một số trường hợp, bạn cần assume role để truy cập tài nguyên ở môi trường khác:
+In some cases, you need to assume a role to access resources in a different environment:
 
 ```bash
-# Assume role cho môi trường staging
+# Assume role for the staging environment
 aws sts assume-role \
   --role-arn arn:aws:iam::<ACCOUNT_ID_STAGING>:role/InfraDeployRole \
   --role-session-name my-session \
   --duration-seconds 3600 \
   --profile dev
 
-# Export credentials từ output
+# Export credentials from the output
 export AWS_ACCESS_KEY_ID="<AccessKeyId>"
 export AWS_SECRET_ACCESS_KEY="<SecretAccessKey>"
 export AWS_SESSION_TOKEN="<SessionToken>"
 
-# Xác nhận
+# Verify
 aws sts get-caller-identity
 ```
 
-Hoặc cấu hình profile với source_profile:
+Or configure a profile with source_profile:
 
 ```ini
 [profile staging]
@@ -85,41 +85,41 @@ source_profile = dev
 region = ap-southeast-1
 ```
 
-Sau đó sử dụng trực tiếp:
+Then use it directly:
 
 ```bash
 aws ecs list-clusters --profile staging
 ```
 
-## MFA setup và cách sử dụng
+## MFA setup and usage
 
-### Thiết lập MFA
+### Set up MFA
 
-1. Đăng nhập vào AWS SSO portal: `https://<DOMAIN>.awsapps.com/start`
-2. Vào **MFA devices** > **Register device**.
-3. Chọn loại MFA:
-   - **Authenticator app** (khuyến nghị): Google Authenticator, Authy, 1Password
+1. Log in to the AWS SSO portal: `https://<DOMAIN>.awsapps.com/start`
+2. Go to **MFA devices** > **Register device**.
+3. Select the MFA type:
+   - **Authenticator app** (recommended): Google Authenticator, Authy, 1Password
    - **Security key**: YubiKey, Titan Key
-4. Quét QR code bằng ứng dụng authenticator và nhập mã xác nhận.
+4. Scan the QR code with your authenticator app and enter the verification code.
 
-### Sử dụng MFA
+### Using MFA
 
-MFA được yêu cầu tự động khi đăng nhập SSO. Nếu sử dụng IAM role trực tiếp (không qua SSO):
+MFA is automatically required when logging in via SSO. If using an IAM role directly (not through SSO):
 
 ```bash
 aws sts get-session-token \
   --serial-number arn:aws:iam::<ACCOUNT_ID>:mfa/<username> \
-  --token-code <mã-6-số-từ-app> \
+  --token-code <6-digit-code-from-app> \
   --duration-seconds 3600
 ```
 
-> **Bắt buộc:** Tất cả tài khoản phải bật MFA. Tài khoản không có MFA sẽ bị vô hiệu hóa sau 7 ngày.
+> **Mandatory:** All accounts must have MFA enabled. Accounts without MFA will be disabled after 7 days.
 
 ## Connect to RDS via SSM port forwarding
 
-Để kết nối an toàn tới RDS mà không cần mở public access, sử dụng AWS Systems Manager Session Manager.
+To securely connect to RDS without opening public access, use AWS Systems Manager Session Manager.
 
-### Cài đặt Session Manager plugin
+### Install Session Manager plugin
 
 **macOS:**
 
@@ -140,34 +140,34 @@ sudo dpkg -i session-manager-plugin.deb
 choco install session-manager-plugin
 ```
 
-Xác nhận cài đặt:
+Verify the installation:
 
 ```bash
 session-manager-plugin --version
 ```
 
-### Kết nối tới database
+### Connect to the database
 
-Sử dụng script có sẵn trong repository:
+Use the script included in the repository:
 
 ```bash
 ./scripts/db-connect.sh dev
 ```
 
-Script sẽ tự động:
-1. Tìm bastion instance hoặc ECS task phù hợp.
-2. Thiết lập SSM port forwarding từ localhost:5432 tới RDS endpoint.
-3. In ra thông tin kết nối.
+The script will automatically:
+1. Find a suitable bastion instance or ECS task.
+2. Set up SSM port forwarding from localhost:5432 to the RDS endpoint.
+3. Print the connection information.
 
-### Kết nối với psql
+### Connect with psql
 
-Sau khi port forwarding đã chạy (giữ terminal mở), mở terminal mới:
+After port forwarding is running (keep the terminal open), open a new terminal:
 
 ```bash
 psql -h localhost -p 5432 -U myapp -d myapp
 ```
 
-Nhập password khi được hỏi. Password được lưu trong AWS Secrets Manager - lấy bằng lệnh:
+Enter the password when prompted. The password is stored in AWS Secrets Manager - retrieve it with the command:
 
 ```bash
 aws secretsmanager get-secret-value \
@@ -179,16 +179,16 @@ aws secretsmanager get-secret-value \
 
 ## Access ECS containers
 
-Để truy cập shell bên trong container ECS đang chạy (tương tự `docker exec`):
+To access a shell inside a running ECS container (similar to `docker exec`):
 
 ```bash
-# Liệt kê các task đang chạy
+# List running tasks
 aws ecs list-tasks \
   --cluster myapp-dev \
   --service-name myapp-api-dev \
   --profile dev
 
-# Execute command vào container
+# Execute command into the container
 aws ecs execute-command \
   --cluster myapp-dev \
   --task <task-id> \
@@ -198,24 +198,24 @@ aws ecs execute-command \
   --profile dev
 ```
 
-> **Lưu ý:** ECS Exec phải được bật trong task definition (`enableExecuteCommand = true`). Cấu hình này đã có sẵn trong Terraform code.
+> **Note:** ECS Exec must be enabled in the task definition (`enableExecuteCommand = true`). This configuration is already included in the Terraform code.
 
 ## View logs
 
 ### CloudWatch Logs
 
-Xem logs real-time từ ECS service:
+View real-time logs from the ECS service:
 
 ```bash
-# Xem logs mới nhất (tail)
+# View latest logs (tail)
 aws logs tail /ecs/myapp-dev --follow --profile dev
 
-# Xem logs trong khoảng thời gian cụ thể
+# View logs within a specific time range
 aws logs tail /ecs/myapp-dev \
   --since 1h \
   --profile dev
 
-# Lọc logs theo pattern
+# Filter logs by pattern
 aws logs filter-log-events \
   --log-group-name /ecs/myapp-dev \
   --filter-pattern "ERROR" \
@@ -223,10 +223,10 @@ aws logs filter-log-events \
   --profile dev
 ```
 
-### Logs từ các service khác
+### Logs from other services
 
 ```bash
-# ALB access logs (nếu bật)
+# ALB access logs (if enabled)
 aws s3 ls s3://myapp-dev-alb-logs/ --profile dev
 
 # RDS logs
@@ -237,36 +237,36 @@ aws rds describe-db-log-files \
 
 ## Security policies
 
-Các quy tắc bảo mật **bắt buộc** phải tuân thủ khi làm việc với AWS:
+Security rules that are **mandatory** to follow when working with AWS:
 
-### Không sử dụng IAM Users
+### Do not use IAM Users
 
-- **Luôn sử dụng IAM Roles** thông qua SSO hoặc assume-role.
-- Không tạo IAM user với access key tĩnh.
-- Ngoại lệ duy nhất: service account cho CI/CD (được quản lý bởi Terraform).
+- **Always use IAM Roles** through SSO or assume-role.
+- Do not create IAM users with static access keys.
+- The only exception: service accounts for CI/CD (managed by Terraform).
 
-### Sử dụng Roles
+### Use Roles
 
-- Mỗi môi trường (dev, staging, prod) có role riêng với quyền phù hợp.
-- Không chia sẻ role giữa các môi trường.
-- Sử dụng `source_profile` hoặc SSO để chuyển đổi giữa các môi trường.
+- Each environment (dev, staging, prod) has its own role with appropriate permissions.
+- Do not share roles between environments.
+- Use `source_profile` or SSO to switch between environments.
 
-### Nguyên tắc quyền tối thiểu (Least Privilege)
+### Principle of Least Privilege
 
-- Chỉ yêu cầu quyền cần thiết cho công việc.
-- Quyền ReadOnly là đủ cho hầu hết tác vụ hàng ngày (xem logs, debug).
-- Quyền PowerUser / Admin chỉ cần khi deploy hoặc thay đổi infrastructure.
-- Review quyền định kỳ mỗi quý.
+- Only request permissions necessary for your work.
+- ReadOnly access is sufficient for most daily tasks (viewing logs, debugging).
+- PowerUser / Admin access is only needed when deploying or changing infrastructure.
+- Review permissions periodically every quarter.
 
-### Không sử dụng long-term credentials
+### Do not use long-term credentials
 
-- Không lưu access key / secret key trong file, code, hoặc biến môi trường lâu dài.
-- Session token từ SSO / assume-role tự động hết hạn (mặc định 1 giờ).
-- Nếu phát hiện credentials bị lộ, **báo cáo ngay lập tức** cho team security và rotate credentials.
+- Do not store access keys / secret keys in files, code, or environment variables long-term.
+- Session tokens from SSO / assume-role expire automatically (default 1 hour).
+- If credentials are found to be exposed, **report immediately** to the security team and rotate credentials.
 
-### Quy tắc bổ sung
+### Additional rules
 
-- Không mở security group với `0.0.0.0/0` cho port nào ngoài 80/443.
-- Không tắt encryption cho bất kỳ resource nào (S3, RDS, EBS).
-- Không tạo public S3 bucket.
-- Mọi thay đổi infrastructure phải qua Pull Request và được review.
+- Do not open security groups with `0.0.0.0/0` for any port other than 80/443.
+- Do not disable encryption for any resource (S3, RDS, EBS).
+- Do not create public S3 buckets.
+- All infrastructure changes must go through a Pull Request and be reviewed.

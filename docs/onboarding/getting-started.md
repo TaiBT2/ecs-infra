@@ -1,18 +1,18 @@
-# Hướng dẫn bắt đầu
+# Getting Started Guide
 
-## Yêu cầu hệ thống
+## System Requirements
 
-Trước khi bắt đầu, hãy đảm bảo máy của bạn đã cài đặt các công cụ sau:
+Before getting started, make sure your machine has the following tools installed:
 
-| Công cụ    | Phiên bản tối thiểu | Mục đích                        |
+| Tool       | Minimum Version      | Purpose                         |
 | ---------- | -------------------- | ------------------------------- |
-| Terraform  | >= 1.9               | Quản lý hạ tầng IaC            |
-| AWS CLI    | v2                   | Tương tác với AWS               |
-| tflint     | mới nhất             | Kiểm tra lỗi Terraform         |
-| tfsec      | mới nhất             | Quét bảo mật Terraform         |
-| checkov    | mới nhất             | Quét bảo mật và tuân thủ       |
-| git        | >= 2.30              | Quản lý mã nguồn               |
-| jq         | >= 1.6               | Xử lý JSON trên command line   |
+| Terraform  | >= 1.9               | IaC infrastructure management   |
+| AWS CLI    | v2                   | Interact with AWS               |
+| tflint     | latest               | Terraform error checking        |
+| tfsec      | latest               | Terraform security scanning     |
+| checkov    | latest               | Security and compliance scanning|
+| git        | >= 2.30              | Source code management          |
+| jq         | >= 1.6               | JSON processing on command line |
 
 ## Clone repository
 
@@ -21,7 +21,7 @@ git clone git@github.com:<GITHUB_ORG>/<GITHUB_REPO>.git
 cd infra-ecs
 ```
 
-## Cài đặt công cụ
+## Install tools
 
 ### macOS (Homebrew)
 
@@ -73,114 +73,114 @@ choco install jq
 choco install git
 ```
 
-## Cấu hình AWS credentials
+## Configure AWS credentials
 
-Chúng tôi ưu tiên sử dụng **AWS SSO** thay vì access key tĩnh.
+We recommend using **AWS SSO** instead of static access keys.
 
 ```bash
-# Cấu hình SSO profile
+# Configure SSO profile
 aws configure sso
 # SSO session name: infra-ecs
 # SSO start URL: https://<DOMAIN>.awsapps.com/start
 # SSO Region: ap-southeast-1
-# Chọn account và role phù hợp
+# Select the appropriate account and role
 
-# Đăng nhập SSO
+# Log in via SSO
 aws sso login --profile dev
 
-# Xác nhận
+# Verify
 aws sts get-caller-identity --profile dev
 ```
 
-Nếu không sử dụng SSO, cấu hình credentials truyền thống:
+If not using SSO, configure credentials the traditional way:
 
 ```bash
 aws configure --profile dev
-# Nhập AWS Access Key ID, Secret Access Key, Region, Output format
+# Enter AWS Access Key ID, Secret Access Key, Region, Output format
 ```
 
-## Cần điền trước khi deploy
+## Required values before deploying
 
-Trước khi deploy, bạn **bắt buộc** phải thay thế tất cả các placeholder trong codebase bằng giá trị thực tế. Danh sách đầy đủ các placeholder:
+Before deploying, you **must** replace all placeholders in the codebase with actual values. Full list of placeholders:
 
-| Placeholder              | Mô tả                                          | Ví dụ                              |
+| Placeholder              | Description                                     | Example                            |
 | ------------------------ | ----------------------------------------------- | ---------------------------------- |
-| `<ACCOUNT_ID_DEV>`      | AWS Account ID cho môi trường dev               | `123456789012`                     |
-| `<ACCOUNT_ID_STAGING>`  | AWS Account ID cho môi trường staging           | `234567890123`                     |
-| `<ACCOUNT_ID_PROD>`     | AWS Account ID cho môi trường production        | `345678901234`                     |
-| `<DOMAIN>`              | Tên miền chính của dự án                        | `mycompany.com`                    |
-| `<ALERT_EMAIL>`         | Email nhận cảnh báo từ hệ thống                 | `ops-team@mycompany.com`           |
-| `<SLACK_WEBHOOK_URL>`   | Webhook URL Slack để gửi thông báo              | `https://hooks.slack.com/...`      |
-| `<GITHUB_ORG>`          | Tên tổ chức GitHub                              | `my-org`                           |
-| `<GITHUB_REPO>`         | Tên repository trên GitHub                      | `infra-ecs`                        |
-| `<COST_CENTER>`         | Mã trung tâm chi phí cho tagging                | `engineering-platform`             |
-| `<OWNER>`               | Người / team chịu trách nhiệm cho resource      | `platform-team`                    |
+| `<ACCOUNT_ID_DEV>`      | AWS Account ID for the dev environment          | `123456789012`                     |
+| `<ACCOUNT_ID_STAGING>`  | AWS Account ID for the staging environment      | `234567890123`                     |
+| `<ACCOUNT_ID_PROD>`     | AWS Account ID for the production environment   | `345678901234`                     |
+| `<DOMAIN>`              | Main domain name of the project                 | `mycompany.com`                    |
+| `<ALERT_EMAIL>`         | Email to receive system alerts                  | `ops-team@mycompany.com`           |
+| `<SLACK_WEBHOOK_URL>`   | Slack Webhook URL for sending notifications     | `https://hooks.slack.com/...`      |
+| `<GITHUB_ORG>`          | GitHub organization name                        | `my-org`                           |
+| `<GITHUB_REPO>`         | GitHub repository name                          | `infra-ecs`                        |
+| `<COST_CENTER>`         | Cost center code for tagging                    | `engineering-platform`             |
+| `<OWNER>`               | Person / team responsible for the resource      | `platform-team`                    |
 
-Sử dụng lệnh sau để tìm tất cả placeholder chưa được thay thế:
+Use the following command to find all unreplaced placeholders:
 
 ```bash
 grep -r '<[A-Z_]*>' terraform/ .github/
 ```
 
-> **Lưu ý:** Không commit giá trị thực của các placeholder nhạy cảm (account ID, webhook URL) vào repository. Sử dụng `terraform.tfvars` (đã nằm trong `.gitignore`) hoặc biến môi trường.
+> **Note:** Do not commit actual values of sensitive placeholders (account ID, webhook URL) into the repository. Use `terraform.tfvars` (already in `.gitignore`) or environment variables.
 
-## Bootstrap state lần đầu
+## First-time state bootstrap
 
-Khi deploy lần đầu tiên, bạn cần khởi tạo S3 backend để lưu trữ Terraform state:
+When deploying for the first time, you need to initialize the S3 backend to store Terraform state:
 
 ```bash
 ./scripts/bootstrap.sh dev
 ```
 
-Script này sẽ tạo:
-- S3 bucket cho Terraform state
-- DynamoDB table cho state locking
-- Cấu hình encryption và versioning
+This script will create:
+- S3 bucket for Terraform state
+- DynamoDB table for state locking
+- Encryption and versioning configuration
 
-## Deploy môi trường dev
+## Deploy the dev environment
 
-Sau khi bootstrap xong, tiến hành deploy:
+After bootstrap is complete, proceed with deployment:
 
 ```bash
 cd terraform/envs/dev
 
-# Khởi tạo Terraform (tải providers và modules)
+# Initialize Terraform (download providers and modules)
 terraform init
 
-# Xem trước thay đổi
+# Preview changes
 terraform plan
 
-# Áp dụng thay đổi (nhập "yes" khi được hỏi)
+# Apply changes (type "yes" when prompted)
 terraform apply
 ```
 
-## Xác nhận deploy thành công
+## Verify successful deployment
 
-Sau khi `terraform apply` hoàn tất, kiểm tra kết quả:
+After `terraform apply` completes, verify the results:
 
-### 1. Kiểm tra terraform output
+### 1. Check terraform output
 
 ```bash
 terraform output
 ```
 
-Bạn sẽ thấy các output như ALB DNS name, ECS cluster name, RDS endpoint, v.v.
+You should see outputs such as ALB DNS name, ECS cluster name, RDS endpoint, etc.
 
-### 2. Kiểm tra trên AWS Console
+### 2. Verify on AWS Console
 
-- **ECS**: Vào ECS Console > Clusters, xác nhận cluster đã được tạo và service đang chạy.
-- **ALB**: Vào EC2 Console > Load Balancers, xác nhận ALB healthy.
-- **RDS**: Vào RDS Console, xác nhận database instance ở trạng thái "Available".
-- **VPC**: Vào VPC Console, xác nhận VPC, subnets, và security groups đã được tạo.
+- **ECS**: Go to ECS Console > Clusters, confirm the cluster has been created and the service is running.
+- **ALB**: Go to EC2 Console > Load Balancers, confirm the ALB is healthy.
+- **RDS**: Go to RDS Console, confirm the database instance is in "Available" status.
+- **VPC**: Go to VPC Console, confirm the VPC, subnets, and security groups have been created.
 
-### 3. Kiểm tra health check
+### 3. Check health check
 
 ```bash
-# Lấy ALB DNS từ terraform output
+# Get ALB DNS from terraform output
 ALB_DNS=$(terraform output -raw alb_dns_name)
 
-# Kiểm tra health endpoint
+# Check health endpoint
 curl -s "http://${ALB_DNS}/health"
 ```
 
-Nếu trả về status `200 OK`, deploy đã thành công.
+If it returns status `200 OK`, the deployment was successful.

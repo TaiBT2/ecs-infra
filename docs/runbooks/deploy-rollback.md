@@ -1,64 +1,64 @@
-# Runbook: Rollback Triển khai (Deploy Rollback)
+# Runbook: Deploy Rollback
 
-## Mục đích & khi nào dùng
+## Purpose & When to Use
 
-Runbook này hướng dẫn rollback deployment khi phiên bản mới gây ra lỗi hoặc sự cố. Sử dụng khi:
+This runbook guides the deployment rollback process when a new version causes errors or incidents. Use when:
 
-- Deployment mới gây tăng error rate hoặc latency
-- Health check liên tục fail sau deployment
-- Phát hiện bug nghiêm trọng trong phiên bản mới
-- Cần quay về phiên bản ổn định trước đó nhanh nhất
+- A new deployment causes increased error rate or latency
+- Health checks continuously fail after deployment
+- A critical bug is discovered in the new version
+- Need to revert to the previous stable version as quickly as possible
 
-## Tiền điều kiện
+## Prerequisites
 
-- AWS CLI đã cấu hình với quyền ECS, IAM phù hợp (`aws sts get-caller-identity`)
-- Biết cluster name và service name cần rollback
-- Terraform đã cài đặt (nếu cần rollback Terraform state)
-- Git access vào repository `infra-ecs`
+- AWS CLI configured with appropriate ECS, IAM permissions (`aws sts get-caller-identity`)
+- Know the cluster name and service name to roll back
+- Terraform installed (if Terraform state rollback is needed)
+- Git access to the `infra-ecs` repository
 
-## Các bước chi tiết
+## Detailed Steps
 
-### Phương án A: Rollback ECS Task Definition
+### Option A: Rollback ECS Task Definition
 
-Phương án nhanh nhất — chỉ rollback container/task definition mà không thay đổi infrastructure.
+The fastest option — only rolls back the container/task definition without changing infrastructure.
 
-**Bước 1: Xác định task definition hiện tại và trước đó:**
+**Step 1: Identify the current and previous task definitions:**
 
 ```bash
-# Lấy task definition hiện tại của service
+# Get the current task definition of the service
 CURRENT_TASK_DEF=$(aws ecs describe-services \
   --cluster myapp-prod-cluster \
   --services myapp-prod-api-service \
   --query 'services[0].taskDefinition' \
   --output text)
 
-echo "Task definition hiện tại: $CURRENT_TASK_DEF"
+echo "Current task definition: $CURRENT_TASK_DEF"
 
-# Lấy revision number hiện tại
+# Get the current revision number
 CURRENT_REVISION=$(echo $CURRENT_TASK_DEF | grep -o '[0-9]*$')
-echo "Revision hiện tại: $CURRENT_REVISION"
+echo "Current revision: $CURRENT_REVISION"
 
-# Tính revision trước đó
+# Calculate the previous revision
 PREVIOUS_REVISION=$((CURRENT_REVISION - 1))
 TASK_DEF_FAMILY=$(echo $CURRENT_TASK_DEF | sed "s/:${CURRENT_REVISION}$//")
 PREVIOUS_TASK_DEF="${TASK_DEF_FAMILY}:${PREVIOUS_REVISION}"
-echo "Task definition trước đó: $PREVIOUS_TASK_DEF"
+echo "Previous task definition: $PREVIOUS_TASK_DEF"
 ```
 
-**Bước 2: Xác nhận task definition trước đó tồn tại và hợp lệ:**
+**Step 2: Verify the previous task definition exists and is valid:**
 
 ```bash
-# Kiểm tra task definition trước đó
+# Check the previous task definition
 aws ecs describe-task-definition \
   --task-definition $PREVIOUS_TASK_DEF \
   --query 'taskDefinition.{family:family,revision:revision,status:status,image:containerDefinitions[0].image}' \
   --output table
 ```
 
-**Bước 3: Rollback service về task definition trước đó:**
+**Step 3: Roll back the service to the previous task definition:**
 
 ```bash
-# Cập nhật service để dùng task definition cũ
+# Update the service to use the old task definition
 aws ecs update-service \
   --cluster myapp-prod-cluster \
   --service myapp-prod-api-service \
@@ -66,24 +66,24 @@ aws ecs update-service \
   --force-new-deployment \
   --output json
 
-echo "Đã bắt đầu rollback. Đang chờ deployment ổn định..."
+echo "Rollback started. Waiting for deployment to stabilize..."
 ```
 
-**Bước 4: Chờ deployment ổn định:**
+**Step 4: Wait for deployment to stabilize:**
 
 ```bash
-# Chờ service stable (timeout 10 phút)
+# Wait for service to become stable (timeout 10 minutes)
 aws ecs wait services-stable \
   --cluster myapp-prod-cluster \
   --services myapp-prod-api-service
 
-echo "Service đã ổn định!"
+echo "Service has stabilized!"
 ```
 
-**Bước 5: Kiểm tra trạng thái deployment:**
+**Step 5: Check deployment status:**
 
 ```bash
-# Xác nhận chỉ có 1 deployment ACTIVE (PRIMARY)
+# Confirm only 1 ACTIVE deployment (PRIMARY)
 aws ecs describe-services \
   --cluster myapp-prod-cluster \
   --services myapp-prod-api-service \
@@ -91,77 +91,77 @@ aws ecs describe-services \
   --output table
 ```
 
-### Phương án B: Rollback Terraform State
+### Option B: Rollback Terraform State
 
-Sử dụng khi cần rollback thay đổi infrastructure (VPC, RDS, ALB, v.v.).
+Use when infrastructure changes need to be rolled back (VPC, RDS, ALB, etc.).
 
-**Bước 1: Kiểm tra trạng thái Terraform hiện tại:**
+**Step 1: Check current Terraform state:**
 
 ```bash
 cd terraform/envs/prod
 
-# Pull state hiện tại
+# Pull current state
 terraform state pull > /tmp/terraform-state-backup-$(date +%Y%m%d%H%M%S).json
-echo "Đã backup state tại /tmp/terraform-state-backup-*.json"
+echo "State backed up at /tmp/terraform-state-backup-*.json"
 
-# Xem các resources trong state
+# View resources in state
 terraform state list
 ```
 
-**Bước 2: Plan để kiểm tra thay đổi:**
+**Step 2: Plan to check changes:**
 
 ```bash
-# Kiểm tra Terraform sẽ thay đổi gì so với state hiện tại
+# Check what Terraform will change compared to the current state
 terraform plan -out=rollback.tfplan
 
-# Review plan cẩn thận trước khi apply
+# Review the plan carefully before applying
 ```
 
-**Bước 3a: Rollback resource cụ thể (targeted):**
+**Step 3a: Rollback specific resources (targeted):**
 
 ```bash
-# Nếu chỉ cần rollback 1-2 resources cụ thể
-# Ví dụ: rollback chỉ ECS service
+# If only 1-2 specific resources need to be rolled back
+# Example: rollback only the ECS service
 terraform plan -target=module.compute.aws_ecs_service.api -out=rollback.tfplan
 terraform apply rollback.tfplan
 ```
 
-**Bước 3b: Rollback toàn bộ bằng git revert:**
+**Step 3b: Full rollback via git revert:**
 
 ```bash
-# Tìm commit gây lỗi
+# Find the commit that caused the issue
 git log --oneline -10
 
-# Revert commit đó
+# Revert that commit
 git revert <COMMIT_HASH> --no-edit
 
 # Review changes
 git diff HEAD~1
 
-# Push và chờ CI/CD apply
+# Push and wait for CI/CD to apply
 git push origin main
 
-# HOẶC apply thủ công nếu CI/CD không hoạt động
+# OR apply manually if CI/CD is not working
 cd terraform/envs/prod
 terraform init
 terraform plan -out=rollback.tfplan
 terraform apply rollback.tfplan
 ```
 
-**Bước 3c: Rollback hoàn toàn về state cũ (tình huống khẩn cấp):**
+**Step 3c: Full state rollback (emergency situation):**
 
 ```bash
-# CHÚ Ý: Chỉ dùng khi các phương án khác không hiệu quả
-# Đảm bảo đã backup state hiện tại ở Bước 1
+# WARNING: Only use when other options are not effective
+# Make sure you backed up the current state in Step 1
 
-# Tìm state file backup trên S3 (nếu có versioning)
+# Find the state file backup on S3 (if versioning is enabled)
 aws s3api list-object-versions \
   --bucket myapp-terraform-state \
   --prefix prod/terraform.tfstate \
   --query 'Versions[0:5].{VersionId:VersionId,Modified:LastModified,Size:Size}' \
   --output table
 
-# Restore state version cụ thể
+# Restore a specific state version
 aws s3api get-object \
   --bucket myapp-terraform-state \
   --key prod/terraform.tfstate \
@@ -171,29 +171,29 @@ aws s3api get-object \
 # Push restored state
 terraform state push /tmp/restored-state.json
 
-# Plan và apply
+# Plan and apply
 terraform plan -out=rollback.tfplan
 terraform apply rollback.tfplan
 ```
 
-## Verify
+## Verification
 
 ```bash
-# Kiểm tra ECS service healthy
+# Check ECS service is healthy
 aws ecs describe-services \
   --cluster myapp-prod-cluster \
   --services myapp-prod-api-service \
   --query 'services[0].{status:status,running:runningCount,desired:desiredCount,taskDef:taskDefinition}'
 
-# Kiểm tra ALB targets
+# Check ALB targets
 aws elbv2 describe-target-health \
   --target-group-arn <TARGET_GROUP_ARN> \
   --query 'TargetHealthDescriptions[].{id:Target.Id,health:TargetHealth.State}'
 
-# Kiểm tra application endpoint
+# Check application endpoint
 curl -sf https://<DOMAIN>/api/health && echo "OK" || echo "FAIL"
 
-# Kiểm tra error rate đã giảm
+# Check that error rate has decreased
 aws cloudwatch get-metric-statistics \
   --namespace AWS/ApplicationELB \
   --metric-name HTTPCode_Target_5XX_Count \
@@ -203,24 +203,24 @@ aws cloudwatch get-metric-statistics \
   --period 60 \
   --statistics Sum
 
-# Kiểm tra logs không còn lỗi mới
+# Check logs for no new errors
 aws logs tail /ecs/myapp-prod-api --since 5m --filter-pattern "ERROR"
 ```
 
 ## Rollback
 
-Nếu rollback bản thân gây ra vấn đề:
+If the rollback itself causes issues:
 
-1. **ECS**: Quay lại task definition gần nhất hoạt động tốt bằng cách lặp lại Phương án A với revision khác
-2. **Terraform**: Restore state từ S3 versioned backup (Bước 3c của Phương án B)
-3. Nếu cả hai không hiệu quả, escalate ngay
+1. **ECS**: Revert to the most recent working task definition by repeating Option A with a different revision
+2. **Terraform**: Restore state from S3 versioned backup (Step 3c of Option B)
+3. If neither works, escalate immediately
 
 ## Escalation
 
-| Điều kiện | Escalation đến |
-|-----------|----------------|
-| Rollback ECS không thành công sau 15 phút | Team Lead + Senior DevOps |
-| Terraform state bị corrupt hoặc drift nghiêm trọng | Senior DevOps + Infrastructure Lead |
-| Rollback gây ảnh hưởng đến data integrity | DBA + Engineering Manager |
-| Không rõ revision nào an toàn để rollback | Team Lead — kiểm tra deployment history và release notes |
-| Cần AWS Support | Mở case tại https://console.aws.amazon.com/support |
+| Condition | Escalate to |
+|-----------|-------------|
+| ECS rollback unsuccessful after 15 minutes | Team Lead + Senior DevOps |
+| Terraform state is corrupt or has significant drift | Senior DevOps + Infrastructure Lead |
+| Rollback affects data integrity | DBA + Engineering Manager |
+| Unclear which revision is safe to roll back to | Team Lead — check deployment history and release notes |
+| AWS Support needed | Open a case at https://console.aws.amazon.com/support |

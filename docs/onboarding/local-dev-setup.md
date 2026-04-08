@@ -1,18 +1,18 @@
-# Thiết lập môi trường phát triển local
+# Local Development Environment Setup
 
 ## Pre-commit hooks setup
 
-Pre-commit hooks giúp tự động kiểm tra code trước mỗi lần commit, đảm bảo chất lượng và bảo mật.
+Pre-commit hooks automatically check code before each commit, ensuring quality and security.
 
-### Cài đặt pre-commit
+### Install pre-commit
 
 ```bash
 pip install pre-commit
 ```
 
-### Cấu hình .pre-commit-config.yaml
+### Configure .pre-commit-config.yaml
 
-Tạo hoặc cập nhật file `.pre-commit-config.yaml` ở thư mục gốc của repository:
+Create or update the `.pre-commit-config.yaml` file in the root directory of the repository:
 
 ```yaml
 repos:
@@ -21,32 +21,32 @@ repos:
     hooks:
       - id: terraform_fmt
         name: Terraform fmt
-        description: Tự động format code Terraform
+        description: Auto-format Terraform code
 
       - id: terraform_tflint
         name: Terraform tflint
-        description: Kiểm tra lỗi và best practices
+        description: Check for errors and best practices
 
       - id: terraform_tfsec
         name: Terraform tfsec
-        description: Quét lỗ hổng bảo mật
+        description: Scan for security vulnerabilities
 
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
     hooks:
       - id: detect-secrets
         name: Detect secrets
-        description: Phát hiện secrets bị commit nhầm
+        description: Detect accidentally committed secrets
         args: ["--baseline", ".secrets.baseline"]
 ```
 
-### Kích hoạt pre-commit
+### Activate pre-commit
 
 ```bash
-# Cài đặt hooks vào git
+# Install hooks into git
 pre-commit install
 
-# Chạy thử trên toàn bộ repository
+# Run a test on the entire repository
 pre-commit run --all-files
 ```
 
@@ -54,16 +54,16 @@ pre-commit run --all-files
 
 ### VSCode
 
-#### Extensions cần thiết
+#### Required extensions
 
-Cài đặt các extension sau từ VS Code Marketplace:
+Install the following extensions from the VS Code Marketplace:
 
-- **HashiCorp Terraform** (`hashicorp.terraform`) - Syntax highlighting, auto-completion, go-to-definition cho Terraform
-- **AWS Toolkit** (`amazonwebservices.aws-toolkit-vscode`) - Tích hợp AWS services trực tiếp trong IDE
+- **HashiCorp Terraform** (`hashicorp.terraform`) - Syntax highlighting, auto-completion, go-to-definition for Terraform
+- **AWS Toolkit** (`amazonwebservices.aws-toolkit-vscode`) - AWS services integration directly in the IDE
 
-#### Cấu hình settings.json
+#### Configure settings.json
 
-Thêm các cấu hình sau vào `.vscode/settings.json` của workspace:
+Add the following configuration to your workspace's `.vscode/settings.json`:
 
 ```json
 {
@@ -87,113 +87,113 @@ Thêm các cấu hình sau vào `.vscode/settings.json` của workspace:
 
 ### JetBrains (IntelliJ / GoLand)
 
-1. Vào **Settings > Plugins > Marketplace**.
-2. Tìm và cài đặt plugin **Terraform and HCL** (by JetBrains).
-3. Bật auto-format: **Settings > Tools > Terraform > Format on save**.
+1. Go to **Settings > Plugins > Marketplace**.
+2. Search for and install the **Terraform and HCL** plugin (by JetBrains).
+3. Enable auto-format: **Settings > Tools > Terraform > Format on save**.
 
 ## Terraform fmt: auto-format on save
 
-`terraform fmt` đảm bảo code luôn nhất quán theo chuẩn của HashiCorp.
+`terraform fmt` ensures code is always consistent with HashiCorp's standard.
 
 ```bash
-# Format toàn bộ project
+# Format the entire project
 terraform fmt -recursive
 
-# Kiểm tra xem file nào chưa được format (không thay đổi file)
+# Check which files are not yet formatted (does not modify files)
 terraform fmt -check -recursive
 ```
 
-Nếu bạn đã cấu hình IDE theo hướng dẫn ở trên, file sẽ được tự động format mỗi khi lưu.
+If you have configured your IDE following the instructions above, files will be automatically formatted every time you save.
 
-## Linting: tflint với project config
+## Linting: tflint with project config
 
-tflint kiểm tra lỗi cú pháp, best practices, và quy tắc riêng của AWS provider.
+tflint checks for syntax errors, best practices, and AWS provider-specific rules.
 
 ```bash
-# Khởi tạo tflint (tải plugins)
+# Initialize tflint (download plugins)
 tflint --init
 
-# Chạy lint trong thư mục hiện tại
+# Run lint in the current directory
 tflint
 
-# Chạy lint đệ quy cho toàn bộ project
+# Run lint recursively for the entire project
 find terraform/ -name '*.tf' -exec dirname {} \; | sort -u | while read dir; do
   echo "=== Linting: $dir ==="
   tflint --chdir="$dir"
 done
 ```
 
-File cấu hình `.tflint.hcl` ở thư mục gốc đã được thiết lập sẵn với các rules phù hợp cho dự án.
+The `.tflint.hcl` configuration file in the root directory has been pre-configured with rules appropriate for the project.
 
 ## Security scanning locally
 
 ### tfsec
 
-Quét các vấn đề bảo mật trong code Terraform:
+Scan for security issues in Terraform code:
 
 ```bash
-# Quét toàn bộ project
+# Scan the entire project
 tfsec terraform/
 
-# Quét với output dạng JSON
+# Scan with JSON output
 tfsec terraform/ --format json
 
-# Bỏ qua rule cụ thể (chỉ khi có lý do chính đáng)
+# Skip a specific rule (only when there is a valid reason)
 tfsec terraform/ --exclude aws-vpc-no-public-ingress
 ```
 
 ### checkov
 
-Kiểm tra tuân thủ và bảo mật toàn diện:
+Comprehensive compliance and security checking:
 
 ```bash
-# Quét toàn bộ thư mục terraform
+# Scan the entire terraform directory
 checkov -d terraform/
 
-# Quét với framework cụ thể
+# Scan with a specific framework
 checkov -d terraform/ --framework terraform
 
-# Xuất báo cáo dạng JUnit XML (hữu ích cho CI)
+# Export report in JUnit XML format (useful for CI)
 checkov -d terraform/ -o junitxml > checkov-report.xml
 ```
 
-> **Mẹo:** Chạy cả `tfsec` và `checkov` trước khi tạo PR. CI pipeline cũng sẽ chạy lại các công cụ này, nhưng phát hiện sớm giúp tiết kiệm thời gian.
+> **Tip:** Run both `tfsec` and `checkov` before creating a PR. The CI pipeline will also run these tools, but catching issues early saves time.
 
 ## Git workflow
 
-### Quy ước đặt tên branch
+### Branch naming convention
 
 ```
-<type>/<ticket-id>-<mô-tả-ngắn>
+<type>/<ticket-id>-<short-description>
 ```
 
-Ví dụ:
+Examples:
 - `feat/INFRA-123-add-redis-cluster`
 - `fix/INFRA-456-fix-alb-health-check`
 - `chore/INFRA-789-update-terraform-version`
 
-Các type phổ biến:
-| Type      | Mục đích                              |
+Common types:
+| Type      | Purpose                               |
 | --------- | ------------------------------------- |
-| `feat`    | Tính năng mới hoặc resource mới      |
-| `fix`     | Sửa lỗi                              |
-| `chore`   | Cập nhật dependencies, refactor nhỏ  |
-| `docs`    | Cập nhật tài liệu                    |
-| `security`| Sửa lỗi bảo mật                     |
+| `feat`    | New feature or new resource           |
+| `fix`     | Bug fix                               |
+| `chore`   | Update dependencies, minor refactor   |
+| `docs`    | Update documentation                  |
+| `security`| Security fix                          |
 
-### Quy ước commit message
+### Commit message convention
 
-Sử dụng [Conventional Commits](https://www.conventionalcommits.org/):
+Use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
-<type>(<scope>): <mô tả ngắn>
+<type>(<scope>): <short description>
 
-<body - tùy chọn>
+<body - optional>
 
-<footer - tùy chọn>
+<footer - optional>
 ```
 
-Ví dụ:
+Example:
 
 ```
 feat(ecs): add auto-scaling policy for API service
@@ -207,14 +207,14 @@ Refs: INFRA-123
 
 ### PR template
 
-Khi tạo Pull Request, đảm bảo bao gồm:
+When creating a Pull Request, make sure to include:
 
-1. **Mô tả thay đổi**: Giải thích rõ ràng thay đổi gì và tại sao.
-2. **Terraform plan output**: Đính kèm output của `terraform plan` cho môi trường liên quan.
+1. **Description of changes**: Clearly explain what changed and why.
+2. **Terraform plan output**: Attach the `terraform plan` output for the relevant environment.
 3. **Checklist**:
-   - [ ] `terraform fmt` đã chạy
-   - [ ] `tflint` không có lỗi
-   - [ ] `tfsec` / `checkov` không có finding mới
-   - [ ] Đã cập nhật tài liệu (nếu cần)
-   - [ ] Đã test trên môi trường dev (nếu applicable)
-4. **Reviewer**: Tag ít nhất 1 người trong team platform.
+   - [ ] `terraform fmt` has been run
+   - [ ] `tflint` has no errors
+   - [ ] `tfsec` / `checkov` has no new findings
+   - [ ] Documentation has been updated (if needed)
+   - [ ] Tested on the dev environment (if applicable)
+4. **Reviewer**: Tag at least 1 person from the platform team.

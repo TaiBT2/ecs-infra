@@ -1,117 +1,117 @@
-# Runbook: Xoay vòng Secret (Secret Rotation)
+# Runbook: Secret Rotation
 
-## Mục đích & khi nào dùng
+## Purpose & When to Use
 
-Runbook này hướng dẫn quy trình xoay vòng (rotate) credentials và secrets. Sử dụng khi:
+This runbook guides the process for rotating credentials and secrets. Use when:
 
-- Rotation định kỳ theo policy (mỗi 90 ngày)
-- Nghi ngờ credentials bị lộ hoặc bị xâm phạm
-- Nhân viên có quyền truy cập rời khỏi tổ chức
-- Audit yêu cầu rotate credentials
-- Sau một sự cố bảo mật
+- Scheduled rotation per policy (every 90 days)
+- Credentials are suspected to be leaked or compromised
+- An employee with access leaves the organization
+- An audit requires credential rotation
+- After a security incident
 
-## Tiền điều kiện
+## Prerequisites
 
-- AWS CLI đã cấu hình với quyền Secrets Manager, RDS, ECS (`aws sts get-caller-identity`)
-- Quyền `secretsmanager:RotateSecret`, `secretsmanager:DescribeSecret`, `secretsmanager:UpdateSecret`
-- Quyền `ecs:UpdateService` để force deployment
-- Biết secret ARN/name cần rotate
-- Hiểu rằng rotation sẽ gây ra brief connection reset cho ECS tasks
+- AWS CLI configured with Secrets Manager, RDS, ECS permissions (`aws sts get-caller-identity`)
+- Permissions: `secretsmanager:RotateSecret`, `secretsmanager:DescribeSecret`, `secretsmanager:UpdateSecret`
+- Permission: `ecs:UpdateService` to force deployment
+- Know the secret ARN/name to rotate
+- Understand that rotation will cause a brief connection reset for ECS tasks
 
-## Các bước chi tiết
+## Detailed Steps
 
-### Phương án A: Rotate RDS Password qua Secrets Manager (Automatic)
+### Option A: Rotate RDS Password via Secrets Manager (Automatic)
 
-Phương án ưu tiên — sử dụng Lambda rotation function đã cấu hình.
+Preferred option — uses the pre-configured Lambda rotation function.
 
-**Bước 1: Kiểm tra trạng thái secret hiện tại:**
+**Step 1: Check current secret status:**
 
 ```bash
-# Xem thông tin secret
+# View secret information
 aws secretsmanager describe-secret \
   --secret-id myapp-prod-rds-credentials \
   --query '{Name:Name,RotationEnabled:RotationEnabled,LastRotated:LastRotatedDate,NextRotation:NextRotationDate,RotationLambda:RotationRules}' \
   --output table
 
-# Kiểm tra giá trị hiện tại (chỉ để xác nhận format, KHÔNG log ra)
+# Check current value (only to confirm format, do NOT log it)
 aws secretsmanager get-secret-value \
   --secret-id myapp-prod-rds-credentials \
   --query 'SecretString' \
   --output text | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Host: {d[\"host\"]}, User: {d[\"username\"]}, DB: {d[\"dbname\"]}')"
 ```
 
-**Bước 2: Kích hoạt rotation:**
+**Step 2: Trigger rotation:**
 
 ```bash
 # Trigger rotation
 aws secretsmanager rotate-secret \
   --secret-id myapp-prod-rds-credentials
 
-echo "Rotation đã bắt đầu. Lambda function sẽ thực hiện các bước rotation."
+echo "Rotation has started. The Lambda function will perform the rotation steps."
 ```
 
-**Bước 3: Theo dõi tiến trình rotation:**
+**Step 3: Monitor rotation progress:**
 
 ```bash
-# Kiểm tra trạng thái rotation (lặp lại cho đến khi hoàn tất)
+# Check rotation status (repeat until complete)
 aws secretsmanager describe-secret \
   --secret-id myapp-prod-rds-credentials \
   --query '{LastRotated:LastRotatedDate,Versions:VersionIdsToStages}' \
   --output json
 
-# Kiểm tra CloudWatch Logs của rotation Lambda
+# Check CloudWatch Logs of the rotation Lambda
 aws logs tail /aws/lambda/myapp-prod-secret-rotation --since 5m
 ```
 
-**Bước 4: Xác nhận secret mới hoạt động:**
+**Step 4: Confirm the new secret is working:**
 
 ```bash
-# Kiểm tra staging label đã được chuyển
+# Check that the staging label has been transferred
 aws secretsmanager describe-secret \
   --secret-id myapp-prod-rds-credentials \
   --query 'VersionIdsToStages' \
   --output json
 
-# Secret mới phải có label AWSCURRENT, secret cũ có label AWSPREVIOUS
+# The new secret should have the AWSCURRENT label, the old secret should have AWSPREVIOUS
 ```
 
-**Bước 5: Force ECS deployment để lấy credentials mới:**
+**Step 5: Force ECS deployment to pick up new credentials:**
 
 ```bash
-# ECS tasks cần restart để lấy secret mới từ Secrets Manager
+# ECS tasks need to restart to pick up the new secret from Secrets Manager
 aws ecs update-service \
   --cluster myapp-prod-cluster \
   --service myapp-prod-api-service \
   --force-new-deployment
 
-echo "Đang triển khai ECS tasks mới với credentials mới..."
+echo "Deploying new ECS tasks with new credentials..."
 
-# Chờ deployment ổn định
+# Wait for deployment to stabilize
 aws ecs wait services-stable \
   --cluster myapp-prod-cluster \
   --services myapp-prod-api-service
 
-echo "Deployment hoàn tất!"
+echo "Deployment complete!"
 ```
 
-**Bước 6: Kiểm tra tasks mới healthy:**
+**Step 6: Check that new tasks are healthy:**
 
 ```bash
-# Kiểm tra tất cả tasks đang chạy
+# Check all running tasks
 aws ecs list-tasks \
   --cluster myapp-prod-cluster \
   --service-name myapp-prod-api-service \
   --desired-status RUNNING \
   --output text
 
-# Kiểm tra không có tasks STOPPED gần đây (do lỗi credentials)
+# Check for no recently STOPPED tasks (due to credential errors)
 aws ecs list-tasks \
   --cluster myapp-prod-cluster \
   --service-name myapp-prod-api-service \
   --desired-status STOPPED \
   --output text
 
-# Nếu có stopped tasks, kiểm tra lý do
+# If there are stopped tasks, check the reason
 aws ecs describe-tasks \
   --cluster myapp-prod-cluster \
   --tasks <TASK_ARN> \
@@ -119,44 +119,44 @@ aws ecs describe-tasks \
   --output json
 ```
 
-### Phương án B: Manual Rotation (Fallback)
+### Option B: Manual Rotation (Fallback)
 
-Sử dụng khi automatic rotation Lambda gặp lỗi hoặc chưa được cấu hình.
+Use when the automatic rotation Lambda fails or has not been configured.
 
-**Bước 1: Tạo password mới:**
+**Step 1: Generate a new password:**
 
 ```bash
-# Tạo password ngẫu nhiên mạnh (32 ký tự)
+# Generate a strong random password (32 characters)
 NEW_PASSWORD=$(aws secretsmanager get-random-password \
   --password-length 32 \
   --exclude-punctuation \
   --output text)
 
-echo "Password mới đã được tạo (không hiển thị vì lý do bảo mật)"
+echo "New password has been generated (not displayed for security reasons)"
 ```
 
-**Bước 2: Cập nhật password trên RDS:**
+**Step 2: Update the password on RDS:**
 
 ```bash
-# Thay đổi master password trên RDS
+# Change the master password on RDS
 aws rds modify-db-instance \
   --db-instance-identifier myapp-prod-rds-main \
   --master-user-password "$NEW_PASSWORD" \
   --apply-immediately
 
-echo "Đang cập nhật password trên RDS. Có thể mất vài giây."
+echo "Updating password on RDS. This may take a few seconds."
 ```
 
-**Bước 3: Cập nhật secret trong Secrets Manager:**
+**Step 3: Update the secret in Secrets Manager:**
 
 ```bash
-# Lấy secret hiện tại
+# Get the current secret
 CURRENT_SECRET=$(aws secretsmanager get-secret-value \
   --secret-id myapp-prod-rds-credentials \
   --query 'SecretString' \
   --output text)
 
-# Cập nhật password trong secret
+# Update the password in the secret
 UPDATED_SECRET=$(echo $CURRENT_SECRET | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
@@ -168,37 +168,37 @@ aws secretsmanager update-secret \
   --secret-id myapp-prod-rds-credentials \
   --secret-string "$UPDATED_SECRET"
 
-echo "Secret đã được cập nhật trong Secrets Manager."
+echo "Secret has been updated in Secrets Manager."
 ```
 
-**Bước 4: Force ECS deployment (giống Phương án A, Bước 5-6)**
+**Step 4: Force ECS deployment (same as Option A, Steps 5-6)**
 
-### Phương án C: Emergency Password Reset
+### Option C: Emergency Password Reset
 
-Sử dụng khi credentials bị xâm phạm và cần thay đổi ngay lập tức.
+Use when credentials have been compromised and need to be changed immediately.
 
-**Bước 1: Thay đổi password RDS ngay lập tức:**
+**Step 1: Change RDS password immediately:**
 
 ```bash
-# Tạo password mới
+# Generate a new password
 EMERGENCY_PASSWORD=$(aws secretsmanager get-random-password \
   --password-length 32 \
   --exclude-punctuation \
   --output text)
 
-# Đổi password RDS ngay lập tức
+# Change RDS password immediately
 aws rds modify-db-instance \
   --db-instance-identifier myapp-prod-rds-main \
   --master-user-password "$EMERGENCY_PASSWORD" \
   --apply-immediately
 
-echo "!!! PASSWORD ĐÃ THAY ĐỔI - Application sẽ mất kết nối cho đến khi secret được cập nhật !!!"
+echo "!!! PASSWORD HAS BEEN CHANGED - Application will lose connectivity until the secret is updated !!!"
 ```
 
-**Bước 2: Cập nhật secret ngay lập tức:**
+**Step 2: Update the secret immediately:**
 
 ```bash
-# Lấy và cập nhật secret
+# Get and update the secret
 CURRENT_SECRET=$(aws secretsmanager get-secret-value \
   --secret-id myapp-prod-rds-credentials \
   --query 'SecretString' \
@@ -216,7 +216,7 @@ aws secretsmanager update-secret \
   --secret-string "$UPDATED_SECRET"
 ```
 
-**Bước 3: Force ECS deployment ngay lập tức:**
+**Step 3: Force ECS deployment immediately:**
 
 ```bash
 aws ecs update-service \
@@ -229,18 +229,18 @@ aws ecs wait services-stable \
   --services myapp-prod-api-service
 ```
 
-**Bước 4: Revoke tất cả sessions cũ trên RDS (nếu cần):**
+**Step 4: Revoke all old sessions on RDS (if needed):**
 
 ```bash
-# Kết nối vào RDS và kill tất cả connections cũ
-# (yêu cầu psql client hoặc bastion host)
+# Connect to RDS and kill all old connections
+# (requires psql client or bastion host)
 # SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = 'appuser' AND pid <> pg_backend_pid();
 ```
 
-**Bước 5: Kiểm tra CloudTrail để xác định nguồn xâm phạm:**
+**Step 5: Check CloudTrail to identify the source of compromise:**
 
 ```bash
-# Tìm access bất thường đến secret trong 24h qua
+# Find abnormal access to the secret in the last 24 hours
 aws cloudtrail lookup-events \
   --lookup-attributes AttributeKey=ResourceName,AttributeValue=myapp-prod-rds-credentials \
   --start-time $(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ) \
@@ -249,43 +249,43 @@ aws cloudtrail lookup-events \
   --output table
 ```
 
-## Verify
+## Verification
 
 ```bash
-# Kiểm tra secret đã được rotate
+# Check that the secret has been rotated
 aws secretsmanager describe-secret \
   --secret-id myapp-prod-rds-credentials \
   --query '{LastRotated:LastRotatedDate,Versions:VersionIdsToStages}' \
   --output json
 
-# Kiểm tra ECS tasks mới đang chạy healthy
+# Check that new ECS tasks are running healthy
 aws ecs describe-services \
   --cluster myapp-prod-cluster \
   --services myapp-prod-api-service \
   --query 'services[0].{running:runningCount,desired:desiredCount,deployments:deployments[].{status:status,running:runningCount}}'
 
-# Kiểm tra không có lỗi kết nối database trong logs
+# Check for no database connection errors in logs
 aws logs tail /ecs/myapp-prod-api --since 5m --filter-pattern "connection refused"
 aws logs tail /ecs/myapp-prod-api --since 5m --filter-pattern "authentication failed"
 
-# Kiểm tra application health
+# Check application health
 curl -sf https://<DOMAIN>/api/health && echo "OK" || echo "FAIL"
 ```
 
 ## Rollback
 
-Nếu rotation gây lỗi kết nối:
+If rotation causes connection errors:
 
 ```bash
-# Quay về password cũ (Secrets Manager giữ version AWSPREVIOUS)
+# Revert to the old password (Secrets Manager keeps the AWSPREVIOUS version)
 aws secretsmanager update-secret-version-stage \
   --secret-id myapp-prod-rds-credentials \
   --version-stage AWSCURRENT \
   --move-to-version-id <PREVIOUS_VERSION_ID> \
   --remove-from-version-id <CURRENT_VERSION_ID>
 
-# Nếu cần, reset RDS password về giá trị cũ
-# (Lấy từ AWSPREVIOUS version)
+# If needed, reset the RDS password to the old value
+# (Retrieve from the AWSPREVIOUS version)
 OLD_PASSWORD=$(aws secretsmanager get-secret-value \
   --secret-id myapp-prod-rds-credentials \
   --version-stage AWSPREVIOUS \
@@ -306,10 +306,10 @@ aws ecs update-service \
 
 ## Escalation
 
-| Điều kiện | Escalation đến |
-|-----------|----------------|
-| Rotation Lambda liên tục fail | Senior DevOps + Security Team |
-| Nghi ngờ credentials bị lộ ra bên ngoài | Security Team + CISO ngay lập tức |
-| Không thể kết nối RDS sau rotation | DBA + DevOps Lead |
-| Application downtime > 5 phút do rotation | Team Lead + Engineering Manager |
-| Cần rotate credentials cho nhiều service cùng lúc | DevOps Lead — lập kế hoạch rotation window |
+| Condition | Escalate to |
+|-----------|-------------|
+| Rotation Lambda continuously fails | Senior DevOps + Security Team |
+| Credentials suspected to be leaked externally | Security Team + CISO immediately |
+| Unable to connect to RDS after rotation | DBA + DevOps Lead |
+| Application downtime > 5 minutes due to rotation | Team Lead + Engineering Manager |
+| Need to rotate credentials for multiple services simultaneously | DevOps Lead — plan a rotation window |

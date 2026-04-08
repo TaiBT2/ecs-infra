@@ -1,12 +1,12 @@
 # MyApp Infrastructure
 
-Dự án Infrastructure-as-Code cho ứng dụng web 3-tier trên AWS, sử dụng Terraform và GitHub Actions.
+Infrastructure-as-Code project for a 3-tier web application on AWS, using Terraform and GitHub Actions.
 
-## Kiến trúc tổng quan
+## Architecture Overview
 
 ![MyApp AWS Deployment Architecture](app.drawio.png)
 
-**Các thành phần chính:**
+**Main components:**
 
 - **Edge Layer**: Route 53 → CloudFront + WAF/Shield → S3 (SPA static hosting)
 - **Public Subnet**: ALB, NAT Gateway, Internet Gateway
@@ -14,7 +14,7 @@ Dự án Infrastructure-as-Code cho ứng dụng web 3-tier trên AWS, sử dụ
 - **Data Private Subnet**: RDS PostgreSQL (Multi-AZ), ElastiCache Redis, Backup
 - **Observability**: CloudWatch, CloudTrail, GuardDuty, AWS Config, X-Ray, OpenSearch
 
-## Cấu trúc dự án
+## Project Structure
 
 ```
 terraform/
@@ -35,56 +35,56 @@ terraform/
     └── route53/      # Public hosted zone
 ```
 
-## Môi trường
+## Environments
 
-| Môi trường | Mục đích | Auto-deploy | Approval |
+| Environment | Purpose | Auto-deploy | Approval |
 |---|---|---|---|
-| dev | Phát triển, testing | Push to main | Không |
+| dev | Development, testing | Push to main | No |
 | staging | Pre-production | Tag `rc-*` | 1 reviewer |
 | prod | Production | Tag `v*.*.*` | 2 reviewers |
 
-## Bắt đầu nhanh
+## Quick Start
 
-1. **Cài đặt công cụ**: Xem [docs/onboarding/getting-started.md](docs/onboarding/getting-started.md)
+1. **Install tools**: See [docs/onboarding/getting-started.md](docs/onboarding/getting-started.md)
 2. **Bootstrap state**: `./scripts/bootstrap.sh dev`
 3. **Deploy dev**: `cd terraform/envs/dev && terraform init && terraform apply`
 
-## Quy ước đặt tên
+## Naming Conventions
 
-- Pattern: `{project}-{env}-{resource}` (ví dụ: `myapp-prod-rds-main`)
-- Tags bắt buộc: `Project`, `Environment`, `Owner`, `CostCenter`, `ManagedBy=terraform`
+- Pattern: `{project}-{env}-{resource}` (e.g.: `myapp-prod-rds-main`)
+- Required tags: `Project`, `Environment`, `Owner`, `CostCenter`, `ManagedBy=terraform`
 
 ## CI/CD Workflows
 
-| Workflow | Trigger | Mô tả |
+| Workflow | Trigger | Description |
 |---|---|---|
-| `terraform-plan` | Pull Request | Plan tất cả env bị ảnh hưởng, comment lên PR |
+| `terraform-plan` | Pull Request | Plan all affected envs, comment on PR |
 | `terraform-apply` | Push to main | Auto-apply dev |
-| `terraform-promote` | Tag `rc-*` / `v*.*.*` | Deploy staging/prod với approval |
+| `terraform-promote` | Tag `rc-*` / `v*.*.*` | Deploy staging/prod with approval |
 | `terraform-destroy` | Manual | Destroy dev/staging |
-| `drift-detection` | Cron (02:00 UTC) | Phát hiện drift, alert Slack |
+| `drift-detection` | Cron (02:00 UTC) | Detect drift, alert Slack |
 | `security-scan` | Pull Request | tflint, tfsec, checkov, trivy |
 | `docs` | Push to main | Auto-generate terraform-docs |
 
-## Tài liệu
+## Documentation
 
-- [Kiến trúc tổng quan](docs/architecture/overview.md)
-- [Runbooks vận hành](docs/runbooks/)
+- [Architecture Overview](docs/architecture/overview.md)
+- [Operations Runbooks](docs/runbooks/)
 - [Onboarding](docs/onboarding/getting-started.md)
 
-## Placeholders cần thay thế
+## Placeholders to Replace
 
-Tìm và thay thế các placeholder sau trước khi deploy:
+Find and replace the following placeholders before deploying:
 
-| Placeholder | Mô tả |
+| Placeholder | Description |
 |---|---|
-| `<ACCOUNT_ID_DEV>` | AWS Account ID cho env dev |
-| `<ACCOUNT_ID_STAGING>` | AWS Account ID cho env staging |
-| `<ACCOUNT_ID_PROD>` | AWS Account ID cho env prod |
-| `<DOMAIN>` | Domain chính (ví dụ: `myapp.com`) |
-| `<ALERT_EMAIL>` | Email nhận alert |
-| `<SLACK_WEBHOOK_URL>` | Slack webhook cho drift alert |
+| `<ACCOUNT_ID_DEV>` | AWS Account ID for dev env |
+| `<ACCOUNT_ID_STAGING>` | AWS Account ID for staging env |
+| `<ACCOUNT_ID_PROD>` | AWS Account ID for prod env |
+| `<DOMAIN>` | Primary domain (e.g.: `myapp.com`) |
+| `<ALERT_EMAIL>` | Email to receive alerts |
+| `<SLACK_WEBHOOK_URL>` | Slack webhook for drift alerts |
 | `<GITHUB_ORG>` | GitHub organization name |
 | `<GITHUB_REPO>` | GitHub repository name |
-| `<COST_CENTER>` | Mã cost center |
-| `<OWNER>` | Team/người sở hữu |
+| `<COST_CENTER>` | Cost center code |
+| `<OWNER>` | Team/owner |

@@ -1,62 +1,62 @@
-# Runbook: Chuyển đổi dự phòng Database (DB Failover)
+# Runbook: Database Failover
 
-## Mục đích & khi nào dùng
+## Purpose & When to Use
 
-Runbook này hướng dẫn chuyển đổi dự phòng (failover) cho RDS PostgreSQL và ElastiCache Redis khi:
+This runbook guides failover procedures for RDS PostgreSQL and ElastiCache Redis when:
 
-- RDS primary instance gặp sự cố hoặc không phản hồi
-- Cần failover sang standby AZ do AZ bị ảnh hưởng
-- Cần restore database từ snapshot hoặc point-in-time
-- ElastiCache primary node gặp sự cố
-- Bảo trì hạ tầng yêu cầu failover chủ động
+- RDS primary instance encounters an issue or is unresponsive
+- Need to fail over to the standby AZ due to AZ impairment
+- Need to restore the database from a snapshot or point-in-time
+- ElastiCache primary node encounters an issue
+- Infrastructure maintenance requires a proactive failover
 
-## Tiền điều kiện
+## Prerequisites
 
-- AWS CLI đã cấu hình với quyền RDS, ElastiCache (`aws sts get-caller-identity`)
-- RDS instance đang chạy ở chế độ Multi-AZ
-- Biết DB instance identifier: `myapp-prod-rds-main`
-- Biết ElastiCache replication group: `myapp-prod-redis`
-- Application sử dụng RDS endpoint (không hardcode IP)
-- Đã thông báo cho team về planned failover (nếu không phải emergency)
+- AWS CLI configured with RDS, ElastiCache permissions (`aws sts get-caller-identity`)
+- RDS instance running in Multi-AZ mode
+- Know the DB instance identifier: `myapp-prod-rds-main`
+- Know the ElastiCache replication group: `myapp-prod-redis`
+- Application uses the RDS endpoint (no hardcoded IPs)
+- Team has been notified about the planned failover (if not an emergency)
 
-## Các bước chi tiết
+## Detailed Steps
 
-### Phương án A: Manual RDS Multi-AZ Failover
+### Option A: Manual RDS Multi-AZ Failover
 
-Thời gian downtime dự kiến: **60-120 giây**.
+Expected downtime: **60-120 seconds**.
 
-**Bước 1: Kiểm tra trạng thái hiện tại của RDS:**
+**Step 1: Check current RDS status:**
 
 ```bash
-# Kiểm tra instance status và Multi-AZ
+# Check instance status and Multi-AZ
 aws rds describe-db-instances \
   --db-instance-identifier myapp-prod-rds-main \
   --query 'DBInstances[0].{Status:DBInstanceStatus,MultiAZ:MultiAZ,AZ:AvailabilityZone,SecondaryAZ:SecondaryAvailabilityZone,Endpoint:Endpoint.Address,Engine:Engine,Version:EngineVersion}' \
   --output table
 ```
 
-**Bước 2: Thực hiện failover:**
+**Step 2: Perform failover:**
 
 ```bash
-# Force failover bằng cách reboot với --force-failover
+# Force failover by rebooting with --force-failover
 aws rds reboot-db-instance \
   --db-instance-identifier myapp-prod-rds-main \
   --force-failover
 
-echo "Failover đã bắt đầu. Instance sẽ khởi động lại trong 60-120 giây."
+echo "Failover has started. Instance will restart in 60-120 seconds."
 ```
 
-**Bước 3: Theo dõi tiến trình failover:**
+**Step 3: Monitor failover progress:**
 
 ```bash
-# Kiểm tra trạng thái (lặp lại cho đến khi status = available)
+# Check status (repeat until status = available)
 watch -n 10 "aws rds describe-db-instances \
   --db-instance-identifier myapp-prod-rds-main \
   --query 'DBInstances[0].{Status:DBInstanceStatus,AZ:AvailabilityZone}' \
   --output table"
 ```
 
-**Bước 4: Xác nhận AZ đã thay đổi:**
+**Step 4: Confirm the AZ has changed:**
 
 ```bash
 aws rds describe-db-instances \
@@ -65,24 +65,24 @@ aws rds describe-db-instances \
   --output table
 ```
 
-### Phương án B: Restore từ Automated Snapshot
+### Option B: Restore from Automated Snapshot
 
-Sử dụng khi cần restore toàn bộ database về thời điểm snapshot.
+Use when a full database restore to a snapshot point-in-time is needed.
 
-**Bước 1: Liệt kê snapshots có sẵn:**
+**Step 1: List available snapshots:**
 
 ```bash
-# Liệt kê 10 snapshot gần nhất
+# List the 10 most recent snapshots
 aws rds describe-db-snapshots \
   --db-instance-identifier myapp-prod-rds-main \
   --query 'reverse(sort_by(DBSnapshots,&SnapshotCreateTime))[0:10].{Snapshot:DBSnapshotIdentifier,Created:SnapshotCreateTime,Status:Status,Size:AllocatedStorage}' \
   --output table
 ```
 
-**Bước 2: Restore snapshot thành instance mới:**
+**Step 2: Restore snapshot as a new instance:**
 
 ```bash
-# Restore snapshot (tạo instance mới, KHÔNG ghi đè instance cũ)
+# Restore snapshot (creates a new instance, does NOT overwrite the old instance)
 aws rds restore-db-instance-from-db-snapshot \
   --db-instance-identifier myapp-prod-rds-restored \
   --db-snapshot-identifier <SNAPSHOT_ID> \
@@ -92,57 +92,57 @@ aws rds restore-db-instance-from-db-snapshot \
   --multi-az \
   --no-publicly-accessible
 
-echo "Đang restore. Quá trình có thể mất 10-30 phút tùy kích thước database."
+echo "Restoring. The process may take 10-30 minutes depending on database size."
 ```
 
-**Bước 3: Chờ instance mới sẵn sàng:**
+**Step 3: Wait for the new instance to be ready:**
 
 ```bash
 aws rds wait db-instance-available \
   --db-instance-identifier myapp-prod-rds-restored
 
-echo "Instance restored đã sẵn sàng!"
+echo "Restored instance is ready!"
 ```
 
-**Bước 4: Cập nhật endpoint trong application:**
+**Step 4: Update the endpoint in the application:**
 
 ```bash
-# Lấy endpoint mới
+# Get the new endpoint
 aws rds describe-db-instances \
   --db-instance-identifier myapp-prod-rds-restored \
   --query 'DBInstances[0].Endpoint.{Address:Address,Port:Port}' \
   --output table
 
-# Cập nhật secret trong Secrets Manager
+# Update the secret in Secrets Manager
 aws secretsmanager update-secret \
   --secret-id myapp-prod-rds-credentials \
   --secret-string '{"host":"<NEW_ENDPOINT>","port":5432,"username":"appuser","password":"<PASSWORD>","dbname":"myapp"}'
 
-# Force ECS deployment mới để lấy secret mới
+# Force a new ECS deployment to pick up the new secret
 aws ecs update-service \
   --cluster myapp-prod-cluster \
   --service myapp-prod-api-service \
   --force-new-deployment
 ```
 
-### Phương án C: Point-in-Time Recovery (PITR)
+### Option C: Point-in-Time Recovery (PITR)
 
-Sử dụng khi cần restore về thời điểm chính xác (ví dụ: trước khi dữ liệu bị xóa nhầm).
+Use when a restore to an exact point in time is needed (e.g., before data was accidentally deleted).
 
-**Bước 1: Xác định khoảng thời gian có thể restore:**
+**Step 1: Determine the restorable time range:**
 
 ```bash
-# Kiểm tra earliest và latest restorable time
+# Check earliest and latest restorable time
 aws rds describe-db-instances \
   --db-instance-identifier myapp-prod-rds-main \
   --query 'DBInstances[0].{EarliestRestore:EarliestRestorableTime,LatestRestore:LatestRestorableTime}' \
   --output table
 ```
 
-**Bước 2: Thực hiện PITR:**
+**Step 2: Perform PITR:**
 
 ```bash
-# Restore về thời điểm cụ thể (UTC)
+# Restore to a specific point in time (UTC)
 aws rds restore-db-instance-to-point-in-time \
   --source-db-instance-identifier myapp-prod-rds-main \
   --target-db-instance-identifier myapp-prod-rds-pitr \
@@ -153,14 +153,14 @@ aws rds restore-db-instance-to-point-in-time \
   --multi-az \
   --no-publicly-accessible
 
-echo "Đang restore PITR. Quá trình có thể mất 10-30 phút."
+echo "PITR restore in progress. The process may take 10-30 minutes."
 ```
 
-**Bước 3: Chờ và chuyển đổi endpoint (tương tự Phương án B, Bước 3-4)**
+**Step 3: Wait and switch endpoint (same as Option B, Steps 3-4)**
 
-### Phương án D: ElastiCache Failover
+### Option D: ElastiCache Failover
 
-**Bước 1: Kiểm tra trạng thái ElastiCache:**
+**Step 1: Check ElastiCache status:**
 
 ```bash
 aws elasticache describe-replication-groups \
@@ -169,22 +169,22 @@ aws elasticache describe-replication-groups \
   --output json
 ```
 
-**Bước 2: Thực hiện failover:**
+**Step 2: Perform failover:**
 
 ```bash
-# Failover sang replica node ở AZ khác
+# Fail over to a replica node in a different AZ
 aws elasticache modify-replication-group \
   --replication-group-id myapp-prod-redis \
   --automatic-failover-enabled \
   --apply-immediately
 
-# Hoặc test failover thủ công
+# Or test failover manually
 aws elasticache test-failover \
   --replication-group-id myapp-prod-redis \
   --node-group-id 0001
 ```
 
-**Bước 3: Theo dõi tiến trình:**
+**Step 3: Monitor progress:**
 
 ```bash
 watch -n 10 "aws elasticache describe-replication-groups \
@@ -193,36 +193,36 @@ watch -n 10 "aws elasticache describe-replication-groups \
   --output text"
 ```
 
-### Lưu ý quan trọng: Connection String
+### Important Note: Connection Strings
 
-- **LUÔN** sử dụng RDS endpoint DNS (ví dụ: `myapp-prod-rds-main.xxxx.us-east-1.rds.amazonaws.com`), **KHÔNG BAO GIỜ** hardcode IP address
-- Khi failover Multi-AZ, RDS endpoint DNS tự động trỏ sang standby instance mới — application sẽ tự reconnect
-- ElastiCache primary endpoint cũng tự động cập nhật sau failover
-- Application nên có connection retry logic với exponential backoff
+- **ALWAYS** use the RDS endpoint DNS (e.g., `myapp-prod-rds-main.xxxx.us-east-1.rds.amazonaws.com`), **NEVER** hardcode IP addresses
+- During Multi-AZ failover, the RDS endpoint DNS automatically points to the new standby instance — the application will reconnect automatically
+- The ElastiCache primary endpoint also updates automatically after failover
+- The application should have connection retry logic with exponential backoff
 
-## Verify
+## Verification
 
 ```bash
-# Kiểm tra RDS instance status
+# Check RDS instance status
 aws rds describe-db-instances \
   --db-instance-identifier myapp-prod-rds-main \
   --query 'DBInstances[0].{Status:DBInstanceStatus,AZ:AvailabilityZone}' \
   --output table
 
-# Kiểm tra connectivity từ ECS tasks
-# (Kiểm tra logs xem có connection error không)
+# Check connectivity from ECS tasks
+# (Check logs for connection errors)
 aws logs tail /ecs/myapp-prod-api --since 5m --filter-pattern "database"
 
-# Kiểm tra application health endpoint
+# Check application health endpoint
 curl -sf https://<DOMAIN>/api/health && echo "OK" || echo "FAIL"
 
-# Kiểm tra ECS tasks đang chạy healthy
+# Check ECS tasks are running healthy
 aws ecs describe-services \
   --cluster myapp-prod-cluster \
   --services myapp-prod-api-service \
   --query 'services[0].{running:runningCount,desired:desiredCount}'
 
-# Kiểm tra ElastiCache
+# Check ElastiCache
 aws elasticache describe-replication-groups \
   --replication-group-id myapp-prod-redis \
   --query 'ReplicationGroups[0].Status'
@@ -230,12 +230,12 @@ aws elasticache describe-replication-groups \
 
 ## Rollback
 
-- **Multi-AZ failover**: Thực hiện failover lần nữa để quay về AZ cũ (lặp lại Phương án A)
-- **Snapshot restore / PITR**: Instance cũ vẫn còn — chuyển endpoint trở lại instance cũ trong Secrets Manager, rồi force ECS deployment
-- **ElastiCache failover**: Thực hiện failover lần nữa hoặc chờ automatic failover
+- **Multi-AZ failover**: Perform another failover to return to the original AZ (repeat Option A)
+- **Snapshot restore / PITR**: The old instance still exists — switch the endpoint back to the old instance in Secrets Manager, then force an ECS deployment
+- **ElastiCache failover**: Perform another failover or wait for automatic failover
 
 ```bash
-# Xóa instance restored nếu không cần nữa
+# Delete the restored instance if no longer needed
 aws rds delete-db-instance \
   --db-instance-identifier myapp-prod-rds-restored \
   --skip-final-snapshot
@@ -243,10 +243,10 @@ aws rds delete-db-instance \
 
 ## Escalation
 
-| Điều kiện | Escalation đến |
-|-----------|----------------|
-| RDS failover không thành công sau 5 phút | DBA + Senior DevOps |
-| Application không thể reconnect sau failover | Backend Team Lead + DevOps |
-| Data inconsistency sau restore | DBA + Engineering Manager |
-| Cả primary và standby RDS đều không available | AWS Support (Urgent case) + CTO |
-| ElastiCache cluster hoàn toàn không phản hồi | DevOps Lead + AWS Support |
+| Condition | Escalate to |
+|-----------|-------------|
+| RDS failover unsuccessful after 5 minutes | DBA + Senior DevOps |
+| Application unable to reconnect after failover | Backend Team Lead + DevOps |
+| Data inconsistency after restore | DBA + Engineering Manager |
+| Both primary and standby RDS are unavailable | AWS Support (Urgent case) + CTO |
+| ElastiCache cluster completely unresponsive | DevOps Lead + AWS Support |
