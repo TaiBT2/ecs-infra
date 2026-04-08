@@ -1,0 +1,38 @@
+name: Terraform Apply (Dev)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terraform-apply-dev
+  cancel-in-progress: false
+
+jobs:
+  apply-dev:
+    name: Apply to dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Terraform setup
+        uses: ./.github/actions/tf-setup
+        with:
+          role_arn: ${{ secrets.DEV_ROLE_ARN }}
+          working_directory: terraform/envs/dev
+
+      - name: Terraform plan
+        working-directory: terraform/envs/dev
+        run: terraform plan -out=tfplan
+
+      - name: Terraform apply
+        working-directory: terraform/envs/dev
+        run: terraform apply tfplan

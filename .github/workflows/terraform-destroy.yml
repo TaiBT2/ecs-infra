@@ -1,0 +1,53 @@
+name: Terraform Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to destroy"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  destroy:
+    name: Destroy (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate environment is not prod
+        run: |
+          if [ "${{ inputs.environment }}" = "prod" ]; then
+            echo "::error::Destroying production is not allowed."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve role ARN
+        id: role
+        run: |
+          case "${{ inputs.environment }}" in
+            dev)     echo "arn=${{ secrets.DEV_ROLE_ARN }}" >> "$GITHUB_OUTPUT" ;;
+            staging) echo "arn=${{ secrets.STAGING_ROLE_ARN }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Terraform setup
+        uses: ./.github/actions/tf-setup
+        with:
+          role_arn: ${{ steps.role.outputs.arn }}
+          working_directory: terraform/envs/${{ inputs.environment }}
+
+      - name: Terraform plan destroy
+        working-directory: terraform/envs/${{ inputs.environment }}
+        run: terraform plan -destroy -out=tfplan
+
+      - name: Terraform apply destroy
+        working-directory: terraform/envs/${{ inputs.environment }}
+        run: terraform apply tfplan

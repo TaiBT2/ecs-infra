@@ -1,0 +1,9 @@
+soft-fail: false
+framework:
+  - terraform
+skip-check:
+  - CKV_AWS_144  # S3 cross-region replication - not needed for this project
+  - CKV_AWS_145  # S3 KMS encryption - we use it but checkov may false positive
+  - CKV2_AWS_6   # S3 public access - already blocked at bucket level
+compact: true
+quiet: true

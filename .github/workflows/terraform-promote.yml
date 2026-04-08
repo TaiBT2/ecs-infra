@@ -1,0 +1,102 @@
+name: Terraform Promote
+
+on:
+  push:
+    tags:
+      - "rc-*"
+      - "v*.*.*"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  determine-env:
+    name: Determine target environment
+    runs-on: ubuntu-latest
+    outputs:
+      env: ${{ steps.resolve.outputs.env }}
+      role_arn_secret: ${{ steps.resolve.outputs.role_arn_secret }}
+    steps:
+      - name: Resolve environment from tag
+        id: resolve
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [[ "$TAG" == rc-* ]]; then
+            echo "env=staging" >> "$GITHUB_OUTPUT"
+            echo "role_arn_secret=STAGING_ROLE_ARN" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "env=prod" >> "$GITHUB_OUTPUT"
+            echo "role_arn_secret=PROD_ROLE_ARN" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Unrecognized tag pattern: $TAG"
+            exit 1
+          fi
+
+  plan:
+    name: Plan (${{ needs.determine-env.outputs.env }})
+    needs: determine-env
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve role ARN
+        id: role
+        run: |
+          case "${{ needs.determine-env.outputs.env }}" in
+            staging) echo "arn=${{ secrets.STAGING_ROLE_ARN }}" >> "$GITHUB_OUTPUT" ;;
+            prod)    echo "arn=${{ secrets.PROD_ROLE_ARN }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Terraform setup
+        uses: ./.github/actions/tf-setup
+        with:
+          role_arn: ${{ steps.role.outputs.arn }}
+          working_directory: terraform/envs/${{ needs.determine-env.outputs.env }}
+
+      - name: Terraform plan
+        working-directory: terraform/envs/${{ needs.determine-env.outputs.env }}
+        run: terraform plan -out=tfplan
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ needs.determine-env.outputs.env }}
+          path: terraform/envs/${{ needs.determine-env.outputs.env }}/tfplan
+          retention-days: 1
+
+  apply:
+    name: Apply (${{ needs.determine-env.outputs.env }})
+    needs:
+      - determine-env
+      - plan
+    runs-on: ubuntu-latest
+    environment: ${{ needs.determine-env.outputs.env }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve role ARN
+        id: role
+        run: |
+          case "${{ needs.determine-env.outputs.env }}" in
+            staging) echo "arn=${{ secrets.STAGING_ROLE_ARN }}" >> "$GITHUB_OUTPUT" ;;
+            prod)    echo "arn=${{ secrets.PROD_ROLE_ARN }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Terraform setup
+        uses: ./.github/actions/tf-setup
+        with:
+          role_arn: ${{ steps.role.outputs.arn }}
+          working_directory: terraform/envs/${{ needs.determine-env.outputs.env }}
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ needs.determine-env.outputs.env }}
+          path: terraform/envs/${{ needs.determine-env.outputs.env }}
+
+      - name: Terraform apply
+        working-directory: terraform/envs/${{ needs.determine-env.outputs.env }}
+        run: terraform apply tfplan

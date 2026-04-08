@@ -1,0 +1,99 @@
+name: Drift Detection
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  detect-drift:
+    name: Detect drift (${{ matrix.env }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env:
+          - dev
+          - staging
+          - prod
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve role ARN
+        id: role
+        run: |
+          case "${{ matrix.env }}" in
+            dev)     echo "arn=${{ secrets.DEV_ROLE_ARN }}" >> "$GITHUB_OUTPUT" ;;
+            staging) echo "arn=${{ secrets.STAGING_ROLE_ARN }}" >> "$GITHUB_OUTPUT" ;;
+            prod)    echo "arn=${{ secrets.PROD_ROLE_ARN }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Terraform setup
+        uses: ./.github/actions/tf-setup
+        with:
+          role_arn: ${{ steps.role.outputs.arn }}
+          working_directory: terraform/envs/${{ matrix.env }}
+
+      - name: Terraform plan (detect drift)
+        id: plan
+        working-directory: terraform/envs/${{ matrix.env }}
+        run: |
+          set +e
+          terraform plan -detailed-exitcode -no-color -out=tfplan 2>&1 | tee plan_output.txt
+          EXIT_CODE=$?
+          set -e
+
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+
+          if [ $EXIT_CODE -eq 2 ]; then
+            echo "drift_detected=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift_detected=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Exit 1 means error, propagate it; exit 0 and 2 are both valid
+          if [ $EXIT_CODE -eq 1 ]; then
+            exit 1
+          fi
+
+      - name: Send Slack notification on drift
+        if: steps.plan.outputs.drift_detected == 'true'
+        run: |
+          PLAN_SUMMARY=$(grep -E "^Plan:|^No changes" plan_output.txt || echo "Drift detected")
+          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg env "${{ matrix.env }}" \
+              --arg summary "$PLAN_SUMMARY" \
+              --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              '{
+                text: ":warning: Terraform drift detected in *\($env)* environment",
+                blocks: [
+                  {
+                    type: "section",
+                    text: {
+                      type: "mrkdwn",
+                      text: ":warning: *Terraform Drift Detected*\n*Environment:* `\($env)`\n*Summary:* \($summary)\n<\($url)|View workflow run>"
+                    }
+                  }
+                ]
+              }')"
+        working-directory: terraform/envs/${{ matrix.env }}
+
+      - name: Job summary
+        if: always()
+        run: |
+          if [ "${{ steps.plan.outputs.drift_detected }}" = "true" ]; then
+            echo "## :warning: Drift Detected in \`${{ matrix.env }}\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat plan_output.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## :white_check_mark: No drift in \`${{ matrix.env }}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+        working-directory: terraform/envs/${{ matrix.env }}
